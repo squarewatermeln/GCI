@@ -17,4 +17,11 @@ setup(
     ],
     python_requires=">=3.6",
     keywords="complexity, static-analysis, big-o, physics",
+    # --- ADD THIS SECTION ---
+    entry_points={
+        "console_scripts": [
+            "gci-scan=GCI.cli:main",  # Changed from 'GCI' to 'gci-scan'
+        ],
+    },
+    # ------------------------
 )

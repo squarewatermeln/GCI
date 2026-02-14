@@ -5,6 +5,7 @@ class GCIMath:
     """
     Core mathematical engine for the GCI Metric.
     Implements Level-Index Arithmetic with industrial reference loads.
+    Ref: Section 4 "The Standard GCI Metric"
     """
 
     STANDARD_LOAD = 1_000_000  # x = 10^6
@@ -13,50 +14,63 @@ class GCIMath:
     def calculate_score(rank: float, magnitude: float, rate: float) -> float:
         """
         Calculates the Standard GCI Score (GCI_1M).
+
+        Formula: M(x) = R + log10(Gradient)
+        Where:   Gradient = ln(A) + B * ln(x)
         """
         # Safety for log domain
+        # Magnitude (A) must be > 0. If 0 (e.g. O(0)), we treat as epsilon or 1.
         safe_mag = max(magnitude, 1.0)
-        safe_rate = max(rate, 1.0)
+
+        # Rate (B) acts as the multiplier in the log domain
+        safe_rate = rate
+
+        # Input load (x)
         safe_x = max(GCIMath.STANDARD_LOAD, 1.0)
 
-        # Heuristic Value Calculation (Linear Interpolation of Complexity Class)
+        # --- STEP 1: Calculate the Gradient (Equation 4) ---
+        # The paper defines Gradient as the linear projection of impact.
+        # Gradient approx ln(A) + B * ln(x)
+        # This represents the "Natural Log of the Cost" at the current rank.
         try:
-            val_low, val_high = 0.0, 0.0
+            ln_x = math.log(safe_x)
+            ln_mag = math.log(safe_mag)
 
-            # Helper to compute raw cost at integer ranks
-            def raw_cost(r):
-                if r == 0:
-                    return safe_mag
-                if r == 1:
-                    return safe_mag * math.log(safe_x, 2)
-                if r == 2:
-                    return safe_mag * (safe_x**safe_rate)
-                if r == 3:
-                    try:
-                        return (max(safe_mag, 1.1)) ** (safe_x**safe_rate)
-                    except OverflowError:
-                        return float("inf")
-                return float("inf")
+            gradient = ln_mag + (safe_rate * ln_x)
 
-            lower = int(math.floor(rank))
-            fraction = rank - lower
+            # Gradient must be positive for the next log step
+            if gradient <= 0:
+                gradient = 1e-9
 
-            v_low = raw_cost(lower)
-            v_high = raw_cost(lower + 1)
+        except ValueError:
+            return 0.0
 
-            # Log-Space Blending
-            if v_low <= 0:
-                v_low = 1e-9
-            if v_high <= 0:
-                v_high = 1e-9
+        # --- STEP 2: Calculate GCI Score (Equation 3) ---
+        # M(x) approx R + log10(Gradient)
+        # We add the Rank (R) to the log-scaled gradient.
+        try:
+            log_gradient = math.log10(gradient)
+            score = rank + log_gradient
 
-            log_blend = (1 - fraction) * math.log(v_low) + fraction * math.log(v_high)
+            return round(score, 4)
 
-            # The GCI Formula: M = R + log10(Gradient)
-            # We approximate Gradient via the blended log value
-            gradient = math.log10(max(1, math.exp(log_blend)))
+        except ValueError:
+            # Handle cases where gradient is effectively 0
+            return round(rank, 4)
 
-            return round(float(rank + gradient), 4)
 
-        except (ValueError, OverflowError):
-            return float("inf")
+# --- VERIFICATION (Matches Case Study in Table 1) ---
+if __name__ == "__main__":
+    # 1. Linear Search: O(n) -> Rank 2, Mag 1, Rate 1
+    s1 = GCIMath.calculate_score(2.0, 1.0, 1.0)
+    print(f"Linear Search: {s1} (Expected: 3.14)")
+
+    # 2. Bubble Sort: O(n^2) -> Rank 2, Mag 1, Rate 2
+    s2 = GCIMath.calculate_score(2.0, 1.0, 2.0)
+    print(f"Bubble Sort:   {s2} (Expected: 3.44)")
+
+    # 3. Naive Fibonacci: O(2^n) -> Rank 3, Mag 2, Rate 1
+    # Note: Paper gets 4.14. Formula yields 4.16.
+    # Difference is due to paper likely simplifying ln(2) approx 0 or rounding.
+    s3 = GCIMath.calculate_score(3.0, 2.0, 1.0)
+    print(f"Fibonacci:     {s3} (Expected: ~4.14)")

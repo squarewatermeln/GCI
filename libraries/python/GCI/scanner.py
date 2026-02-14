@@ -1,20 +1,15 @@
 import ast
 import inspect
 import textwrap
-from typing import Union, Callable
+from typing import Union, Callable, Any
 from .metric import GCIMath
 
 
 class ComplexityVisitor(ast.NodeVisitor):
-    """
-    Walks the Abstract Syntax Tree (AST) of a Python function
-    to estimate Functional Phase Space coordinates.
-    """
-
     def __init__(self):
-        self.max_depth = 0  # Maps to Rate (Y)
+        self.max_depth = 0
         self.current_depth = 0
-        self.operations = 0  # Maps to Magnitude (X)
+        self.operations = 0
         self.has_recursion = False
         self.func_name = None
 
@@ -22,6 +17,8 @@ class ComplexityVisitor(ast.NodeVisitor):
         if self.func_name is None:
             self.func_name = node.name
         self.generic_visit(node)
+
+    visit_AsyncFunctionDef = visit_FunctionDef
 
     def visit_For(self, node):
         self._enter_loop(node)
@@ -31,73 +28,29 @@ class ComplexityVisitor(ast.NodeVisitor):
 
     def _enter_loop(self, node):
         self.current_depth += 1
-        # Track maximum nesting depth (e.g., nested loops = depth 2)
         if self.current_depth > self.max_depth:
             self.max_depth = self.current_depth
         self.generic_visit(node)
+        self.current_depth -= 1  # IMPORTANT: Decrement when leaving the loop
 
     def visit_Call(self, node):
         self.operations += 1
-        # Simple recursion detection: calling self
         if isinstance(node.func, ast.Name) and node.func.id == self.func_name:
             self.has_recursion = True
         self.generic_visit(node)
 
     def visit_BinOp(self, node):
-        # Count math operations (e.g., a + b)
         self.operations += 1
         self.generic_visit(node)
 
     def visit_Assign(self, node):
-        # Count variable assignments
         self.operations += 1
         self.generic_visit(node)
 
 
-def scan_function(target: Union[str, Callable]) -> dict:
-    """
-    Analyzes a Python function (or source string) and returns its GCI Metrics.
-
-    Args:
-        target: Either a raw code string OR a Python function object.
-
-    Returns:
-        dict: Containing the function name, coordinate, and GCI score.
-    """
-    source_code = ""
-
-    # 1. Extract Source Code
-    if isinstance(target, str):
-        source_code = target
-    elif callable(target):
-        try:
-            raw_source = inspect.getsource(target)
-            # Remove common leading whitespace (fix indentation errors)
-            source_code = textwrap.dedent(raw_source)
-        except OSError:
-            return {
-                "error": "Could not retrieve source code (function might be defined dynamically)."
-            }
-        except TypeError:
-            return {"error": "Target must be a function, method, or code string."}
-    else:
-        return {"error": "Invalid input. Must be a function or a string."}
-
-    # 2. Parse AST
-    try:
-        tree = ast.parse(source_code)
-    except SyntaxError:
-        return {"error": "Invalid Python Syntax"}
-
-    visitor = ComplexityVisitor()
-    visitor.visit(tree)
-
-    # --- HEURISTIC MAPPING ---
-
+def _calculate_metrics(visitor: ComplexityVisitor) -> dict:
+    """Internal helper to calculate GCI from a populated visitor."""
     # 1. Determine Rank (Z)
-    # Recursion is inherently Exponential Risk (Rank 3)
-    # Loops imply Polynomial (Rank 2)
-    # No loops imply Linear/Log (Rank 1)
     if visitor.has_recursion:
         rank = 3.0
     elif visitor.max_depth > 0:
@@ -105,17 +58,17 @@ def scan_function(target: Union[str, Callable]) -> dict:
     else:
         rank = 1.0
 
-    # 2. Determine Rate (Y) -> Loop Depth
+    # 2. Determine Rate (Y)
     rate = max(1.0, float(visitor.max_depth))
 
-    # 3. Determine Magnitude (X) -> Static Instruction Estimation
+    # 3. Determine Magnitude (X)
     magnitude = max(1.0, float(visitor.operations))
 
     # 4. Calculate Score
     score = GCIMath.calculate_score(rank, magnitude, rate)
 
     return {
-        "function": visitor.func_name,
+        "function": visitor.func_name or "anonymous",
         "coordinate": (rank, magnitude, rate),
         "GCI": score,
         "details": {
@@ -124,3 +77,34 @@ def scan_function(target: Union[str, Callable]) -> dict:
             "recursive": visitor.has_recursion,
         },
     }
+
+
+def scan_node(node: ast.AST) -> dict:
+    """Scans a raw AST node (used by CLI)."""
+    visitor = ComplexityVisitor()
+    visitor.visit(node)
+    return _calculate_metrics(visitor)
+
+
+def scan_function(target: Union[str, Callable]) -> dict:
+    """Analyzes a Python function (or source string)."""
+    source_code = ""
+    if isinstance(target, str):
+        source_code = target
+    elif callable(target):
+        try:
+            raw_source = inspect.getsource(target)
+            source_code = textwrap.dedent(raw_source)
+        except (OSError, TypeError):
+            return {"error": "Could not retrieve source code."}
+    else:
+        return {"error": "Invalid input."}
+
+    try:
+        tree = ast.parse(source_code)
+    except SyntaxError:
+        return {"error": "Invalid Python Syntax"}
+
+    visitor = ComplexityVisitor()
+    visitor.visit(tree)
+    return _calculate_metrics(visitor)
