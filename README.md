@@ -108,7 +108,10 @@ This is a **Reference Implementation**. We are actively looking for contributors
 If you use this metric in your research or tooling, please cite the whitepaper:
 
 ```
-insert whitepaper
+Title: The Geometric Complexity Index
+Publication: Zenodo (Pre-print)
+DOI: 10.5281/zenodo.18640728
+Link: https://doi.org/10.5281/zenodo.18640728
 ```
 
 **Author:** Harry Bullman
